@@ -16,3 +16,4 @@ runs/
 *.onnx
 *.engine
 *.safetensors
+test.ipynb
