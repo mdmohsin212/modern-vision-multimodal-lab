@@ -1,5 +1,3 @@
-# Concept
-
 ## ১. Fundamental Concepts
 
 * **Detection vs. Tracking:**
