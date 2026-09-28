@@ -18,3 +18,5 @@ runs/
 *.safetensors
 test.ipynb
 note.txt
+res/
+Vision Models/
