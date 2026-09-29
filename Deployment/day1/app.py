@@ -84,7 +84,6 @@ def decode_image(data: bytes) -> np.ndarray:
     try:
         array = np.frombuffer(data, dtype=np.uint8)
         image = cv2.imdecode(array, cv2.IMREAD_COLOR)
-    
     except cv2.error:
         image = None
     
@@ -95,3 +94,54 @@ def decode_image(data: bytes) -> np.ndarray:
         )
     
     return image
+
+
+def detection_to_json(result):
+    boxes = result.boxes.cpu()
+    
+    return [
+        {
+            "class_id": int(class_id),
+            "class_name": result.names[int(class_id)],
+            "confidence": float(score),
+            "box_xyxy": box
+        }
+        for box, score, class_id in zip(
+            boxes.xyxy.tolist(),
+            boxes.conf.tolist(),
+            boxes.cls.tolist()
+        )
+    ]
+
+
+@app.post("/predict")
+def predict(
+    request: Request, 
+    file: Annotated[UploadFile, File()], 
+    conf: Annotated[float, Query(ge=0.0, le=1.0)] = 0.25
+):
+    started = perf_counter()
+    
+    data = file.file.read(MAX_BYTES + 1)
+    image = decode_image(data)
+    height, width = image.shape[:2]
+    
+    with request.app.state.inference_lock:
+        result = request.app.state.model.predict(
+            image,
+            conf=conf,
+            **SETTINGS
+        )[0]
+        
+        detections = detection_to_json(result)
+    
+    
+    return {
+        "image": {"width": width, "height": height},
+        "confidence_threshold": conf,
+        "num_detections": len(detections),
+        "detections": detections,
+        "server_processing_ms": round(
+            (perf_counter() - started) * 1000, 3
+        )
+    }
