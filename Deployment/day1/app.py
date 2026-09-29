@@ -52,3 +52,46 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="RDD2022 Detection API", lifespan=lifespan)
+
+
+@app.get("/health")
+def health(request: Request):
+    if not getattr(request.app.state, "ready", False):
+        raise HTTPException(status_code=503, detail="Model is not ready.")
+    
+    return {
+        "status": "ready",
+        "model": MODEL_PATH.name,
+        "device": SETTINGS["device"],
+        "imgsz": IMAGE_SIZE,
+        "classes": request.app.state.model.names
+    }
+
+
+def decode_image(data: bytes) -> np.ndarray:
+    if not data:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded file is empty."
+        )
+    
+    if len(data) > MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Image must be at most 10 MiB.",
+        )
+    
+    try:
+        array = np.frombuffer(data, dtype=np.uint8)
+        image = cv2.imdecode(array, cv2.IMREAD_COLOR)
+    
+    except cv2.error:
+        image = None
+    
+    if image is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot decode file as an image.",
+        )
+    
+    return image
