@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+python-multipart
+ultralytics==8.4.173
+onnxruntime==1.30.0
+onnx
