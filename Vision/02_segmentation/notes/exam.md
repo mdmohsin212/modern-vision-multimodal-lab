@@ -1,481 +1,181 @@
-## Section A — Concepts
+# পরীক্ষার ধারণা — পুরো সেগমেন্টেশন ইউনিট (উন্নত `exam.md`)
 
-### Q1 — Semantic এবং instance segmentation-এর পার্থক্য কী? একই image-এ তিনটি আলাদা crack থাকলে U-Net ও YOLO26-seg কী output দেবে?
+> এই নোট মূল `notes/exam.md`-এর উন্নত সংস্করণ। মূল নোটের ধারণা আর Q&A ধাঁচ রাখা হয়েছে, কিন্তু দুটো ভুল ঠিক করা হয়েছে: (১) মূল নোটে Q4 হুবহু দুইবার ছিল — এখানে একবারই আছে; (২) মূল Q10-এ ONNX প্যারিটি "০.০, শর্ত ছাড়া" লেখা ছিল — এখানে শর্তসহ লেখা হয়েছে। সব সংখ্যার সাথে সেটিং দেওয়া হয়েছে।
 
-**উত্তর:**
+## ১. এক লাইনে পুরো ইউনিট
 
-Semantic segmentation ছবির প্রতিটি pixel-কে একটি class দেয়। একই class-এর আলাদা object থাকলেও তাদের পৃথক পরিচয় সংরক্ষণ করে না।
+পুরো সেগমেন্টেশন ইউনিটের মূল প্রশ্ন একটাই: প্রতি পিক্সেলে "কী আছে" জানতে চাও (সেমান্টিক), নাকি "কোন আলাদা বস্তুটা কোথায়" জানতে চাও (ইনস্ট্যান্স) — আর সেই উত্তর অনুযায়ী U-Net, YOLO-seg, না SAM বাছতে হবে, আর Dice/IoU আর থ্রেশহোল্ড দিয়ে প্রমাণ করতে হবে যে মডেল আসলে কাজ করছে।
 
-Instance segmentation প্রতিটি object-কে আলাদা instance হিসেবে শনাক্ত করে। প্রতিটি instance-এর জন্য পৃথক mask, bounding box, class এবং confidence পাওয়া যায়।
-
-একটি ছবিতে তিনটি crack থাকলে:
-
-- **U-Net:** তিনটি crack-এর সব foreground pixel একত্রে একটি binary semantic mask-এ দেখাবে। Output সাধারণত `[B, 1, H, W]` logits, যা sigmoid ও threshold-এর পরে `0 = background`, `1 = crack` mask হবে। কোনটি crack-1, crack-2 বা crack-3—এই পরিচয় থাকবে না।
-- **YOLO26-seg:** তিনটি crack সঠিকভাবে শনাক্ত হলে তিনটি পৃথক mask, তিনটি bounding box, তিনটি confidence score এবং তিনটি class ID দেবে।
-
----
-
-### Q2 — SAM2/SAM3 এবং trained U-Net/YOLO-seg-এর production role কেন আলাদা?
-
-**উত্তর:**
-
-**SAM2** একটি class-agnostic promptable segmentation model। এটি point, box বা mask prompt দিয়ে নির্দেশ করা target segment করে। এটি নিজে থেকে target-এর semantic class নিশ্চিত করে না।
-
-**SAM3** text অথবা exemplar prompt থেকে একটি concept খুঁজে তার matching instances segment করতে পারে। এটি SAM2-এর চেয়ে semantic concept সম্পর্কে বেশি সচেতন, কিন্তু domain-specific trained detector-এর মতো নির্দিষ্ট production class-এর জন্য calibrated নয়।
-
-SAM2/SAM3 উপযুক্ত:
-
-- দ্রুত annotation draft তৈরি
-- human-in-the-loop mask refinement
-- interactive segmentation
-- নতুন বা পরিবর্তনশীল concept নিয়ে zero-shot experiment
-
-অন্যদিকে, trained U-Net এবং YOLO-seg নির্দিষ্ট domain-এর annotated data থেকে শেখে।
-
-- **U-Net:** কোনো human prompt ছাড়াই automatic semantic mask তৈরি করে।
-- **YOLO-seg:** automatic instance mask, box, class ও confidence তৈরি করে।
-
-তাই fixed-domain production inference-এর জন্য trained U-Net/YOLO-seg বেশি উপযুক্ত। SAM সাধারণত annotation assistance বা interactive workflow-তে বেশি উপযোগী।
-
----
-
-## Section B — Math and Metrics
-
-### Q3 — নিচের মান থেকে Precision, Recall, IoU, Dice এবং Pixel Accuracy হিসাব করো।
+## ২. মানসিক ছবি / Flow
 
 ```text
-TP = 600
-FP = 150
-FN = 250
-TN = 9000
+একটা ছবিতে ৩টি আলাদা ক্র্যাক
+        ↓
+প্রশ্ন: কী চাই?
+  ├─ মোট ক্র্যাক এরিয়া → সেমান্টিক → U-Net → ১টি মার্জড মাস্ক [B,1,H,W]
+  ├─ আলাদা ক্র্যাকের মাস্ক + বক্স + কনফিডেন্স → ইনস্ট্যান্স → YOLO-seg
+  └─ মানুষের দেখিয়ে দেওয়া জায়গা / নতুন ধারণা → প্রম্পট → SAM2/SAM3
+        ↓
+মূল্যায়ন: পিক্সেলে TP/FP/FN/TN → প্রিসিশন / রিকল / IoU / Dice
+        ↓
+থ্রেশহোল্ড বাছো: প্রোবাবিলিটি → থ্রেশহোল্ড → বাইনারি মাস্ক → Dice সবচেয়ে বেশি যেখানে
+        ↓
+ভুল বিশ্লেষণ: বক্স ঠিক কিন্তু মাস্ক খারাপ? FP-র কারণ কী? হাই-কনফিডেন্স ভুল কী?
+        ↓
+ডিপ্লয়মেন্ট: ONNX-এ নিয়ে প্যারিটি মাপো (একই সেটিংয়ে!) → লেটেন্সি + মনিটরিং
 ```
 
-**উত্তর:**
+মনে রাখার ছবি: সেমান্টিক মানে এক বালতি রঙ দিয়ে সব ক্র্যাক এক রঙে রাঙানো; ইনস্ট্যান্স মানে প্রতিটা ক্র্যাককে আলাদা নম্বর দেওয়া স্টিকার লাগানো; SAM মানে আঙুল দিয়ে দেখিয়ে দেওয়া "এই জিনিসটা রাঙাও"।
 
-#### Precision
+## ৩. ধাপে ধাপে ধারণা — প্রশ্নোত্তরসহ
 
-$$\text{Precision} = \frac{\text{TP}}{\text{TP} + \text{FP}} = \frac{600}{600 + 150} = 0.8000$$
+### Q1 — সেমান্টিক বনাম ইনস্ট্যান্স: ৩টি ক্র্যাকে U-Net আর YOLO-seg কী দেবে?
 
-#### Recall
+- **সেমান্টিক সেগমেন্টেশন:** প্রতি পিক্সেলকে একটা ক্লাস দেয়। একই ক্লাসের আলাদা বস্তুর পরিচয় থাকে না।
+- **ইনস্ট্যান্স সেগমেন্টেশন:** প্রতিটা বস্তুকে আলাদা ইনস্ট্যান্স হিসেবে দেয় — প্রতিটার জন্য আলাদা মাস্ক, বক্স, ক্লাস, কনফিডেন্স।
+- ৩টি ক্র্যাক থাকলে:
+  - **U-Net:** তিনটার সব ফোরগ্রাউন্ড পিক্সেল একত্রে একটা বাইনারি মাস্কে। আউটপুট সাধারণত `[B, 1, H, W]` লজিট, সিগময়েড + থ্রেশহোল্ডের পর `0 = ব্যাকগ্রাউন্ড`, `1 = ক্র্যাক`। কোনটা ক্র্যাক-১, ক্র্যাক-২, ক্র্যাক-৩ — জানা যাবে না।
+  - **YOLO26-seg:** তিনটা ঠিকমতো ধরা পড়লে তিনটা আলাদা মাস্ক, তিনটা বক্স, তিনটা কনফিডেন্স, তিনটা ক্লাস আইডি।
+- মনে রাখার নিয়ম: "মোট এরিয়া" চাইলে সেমান্টিক যথেষ্ট, "কয়টা, কোনটা, কত নিশ্চিত" চাইলে ইনস্ট্যান্স লাগবে।
 
-$$\text{Recall} = \frac{\text{TP}}{\text{TP} + \text{FN}} = \frac{600}{600 + 250} = 0.7059$$
+### Q2 — SAM2/SAM3 বনাম ট্রেন করা U-Net/YOLO-seg: প্রোডাকশনে ভূমিকা কেন আলাদা?
 
-#### IoU
+- **SAM2:** ক্লাস-অ্যাগনস্টিক, প্রম্পটেবল মডেল। পয়েন্ট, বক্স বা মাস্ক প্রম্পট দিলে নির্দেশিত টার্গেট সেগমেন্ট করে। নিজে থেকে সেমান্টিক ক্লাস নিশ্চিত করে না।
+- **SAM3:** টেক্সট বা এক্সেম্পলার প্রম্পট থেকে ধারণা খুঁজে ম্যাচিং ইনস্ট্যান্স সেগমেন্ট করতে পারে। SAM2-এর চেয়ে ধারণা-সচেতন, কিন্তু নির্দিষ্ট ডোমেইনের জন্য ক্যালিব্রেটেড ডিটেক্টর নয়।
+- SAM ভালো যেখানে: দ্রুত অ্যানোটেশন ড্রাফট, হিউম্যান-ইন-দ্য-লুপ মাস্ক ঠিক করা, ইন্টার‍্যাক্টিভ সেগমেন্টেশন, নতুন/বদলানো ধারণা নিয়ে পরীক্ষা।
+- **ট্রেন করা U-Net:** মানুষের প্রম্পট ছাড়াই স্বয়ংক্রিয় সেমান্টিক মাস্ক দেয়।
+- **ট্রেন করা YOLO-seg:** স্বয়ংক্রিয় ইনস্ট্যান্স মাস্ক, বক্স, ক্লাস, কনফিডেন্স দেয়।
+- তাই ফিক্সড-ডোমেইন প্রোডাকশন ইনফারেন্সে ট্রেন করা মডেল প্রথম পছন্দ; SAM অ্যানোটেশন সহায়তা বা ইন্টার‍্যাক্টিভ কাজে।
+- ⚠️ আর ক্র্যাকে SAM-এর বাস্তব ফল মনে রাখো: GT-প্রম্পটে SAM2 বক্স গড় IoU ০.৫৫০৫ (৯ ইনস্ট্যান্স), আর SAM3 টেক্সটে সেরা F1 মাত্র ০.১৭৩৯ ("surface crack", ৬ ছবি, ১৭ GT)। SAM "সাধারণভাবে ভালো" মানেই তোমার পাতলা ক্র্যাকে ভালো নয়।
 
-$$\text{IoU} = \frac{\text{TP}}{\text{TP} + \text{FP} + \text{FN}} = \frac{600}{600 + 150 + 250} = 0.6000$$
+### Q3 — মেট্রিকের হিসাব: TP 600, FP 150, FN 250, TN 9000
 
-#### Dice
+- প্রিসিশন = `TP / (TP + FP)` = 600 / 750 = **0.8000** — মডেল যা ক্র্যাক বলেছে, তার কতটা আসল ক্র্যাক।
+- রিকল = `TP / (TP + FN)` = 600 / 850 = **0.7059** — আসল ক্র্যাকের কতটা মডেল ধরেছে।
+- IoU = `TP / (TP + FP + FN)` = 600 / 1000 = **0.6000**।
+- Dice = `2TP / (2TP + FP + FN)` = 1200 / 1600 = **0.7500**।
+- পিক্সেল অ্যাকুরেসি = `(TP + TN) / মোট` = 9600 / 10000 = **0.9600**।
+- সম্পর্ক: `Dice = 2·IoU / (1 + IoU)`। একই ভুলে Dice সবসময় IoU-র চেয়ে বড় দেখায় — তাই দুটো সংখ্যা পাশাপাশি না বললে তুলনা করা যায় না।
 
-$$\text{Dice} = \frac{2\text{TP}}{2\text{TP} + \text{FP} + \text{FN}} = \frac{1200}{1200 + 150 + 250} = 0.7500$$
+### Q4 — ইনস্ট্যান্স হিসাব: GT ২০, প্রেডিক্টেড ১৮, ম্যাচড TP ১৪
 
-#### Pixel Accuracy
+- FP = ১৮ − ১৪ = **৪**, FN = ২০ − ১৪ = **৬**।
+- প্রিসিশন = ১৪ / ১৮ = **0.7778**, রিকল = ১৪ / ২০ = **0.7000**, F1 = `2·P·R / (P + R)` = **0.7368**।
+- ⚠️ মূল নোটে এই Q4 হুবহু দুইবার ছিল। এখানে একবারই রাখা হয়েছে — পরীক্ষায় একই প্রশ্ন দুইবার লিখলে সময় নষ্ট, নম্বর বাড়ে না।
+- ইনস্ট্যান্সে "ম্যাচ" মানে কী, সেটা ছাড়া TP-র অর্থ নেই: এই ইউনিটে ম্যাচের নিয়ম ছিল মাস্ক-IoU ≥ ০.৫০ (YOLO এরর নোটবুকে গ্রিডি, SAM3-তে হাঙ্গেরিয়ান)। নিয়ম বদলালে TP বদলে যাবে।
 
-$$\text{Accuracy} = \frac{\text{TP} + \text{TN}}{\text{TP} + \text{TN} + \text{FP} + \text{FN}} = \frac{600 + 9000}{10000} = 0.9600$$
-
-Final results:
-
-```text
-Precision      = 0.8000
-Recall         = 0.7059
-IoU            = 0.6000
-Dice           = 0.7500
-Pixel Accuracy = 0.9600
-
-```
-
----
-
-### Q4 — Instance evaluation-এর নিচের তথ্য থেকে FP, FN, Precision, Recall এবং F1 হিসাব করো।
-
-```text
-GT instances        = 20
-Predicted instances = 18
-Matched TP          = 14
-
-```
-
-**উত্তর:**
-
-#### False Positive
-
-$$\text{FP} = 18 - 14 = 4$$
-
-#### False Negative
-
-$$\text{FN} = 20 - 14 = 6$$
-
-#### Precision
-
-$$\text{Precision} = \frac{\text{TP}}{\text{TP} + \text{FP}} = \frac{14}{18} = 0.7778$$
-
-#### Recall
-
-$$\text{Recall} = \frac{\text{TP}}{\text{TP} + \text{FN}} = \frac{14}{20} = 0.7000$$
-
-#### F1-score
-
-$$\text{F1} = \frac{2 \cdot \text{P} \cdot \text{R}}{\text{P} + \text{R}} = \frac{2(0.7778)(0.7000)}{0.7778 + 0.7000} = 0.7368$$
-
-Final results:
-
-```text
-TP        = 14
-FP        = 4
-FN        = 6
-Precision = 0.7778
-Recall    = 0.7000
-F1        = 0.7368
-
-```
-
----
-
-### Q4 — Instance evaluation-এর নিচের তথ্য থেকে FP, FN, Precision, Recall এবং F1 হিসাব করো।
-
-```text
-GT instances        = 20
-Predicted instances = 18
-Matched TP          = 14
-```
-
-**উত্তর:**
-
-#### False Positive
-
-$$\text{FP} = 18 - 14 = 4$$
-
-#### False Negative
-
-$$\text{FN} = 20 - 14 = 6$$
-
-#### Precision
-
-$$\text{Precision} = \frac{\text{TP}}{\text{TP} + \text{FP}} = \frac{14}{18} = 0.7778$$
-
-#### Recall
-
-$$\text{Recall} = \frac{\text{TP}}{\text{TP} + \text{FN}} = \frac{14}{20} = 0.7000$$
-
-#### F1-score
-
-$$\text{F1} = \frac{2 \cdot \text{P} \cdot \text{R}}{\text{P} + \text{R}} = \frac{2(0.7778)(0.7000)}{0.7778 + 0.7000} = 0.7368$$
-
-Final results:
-
-```text
-TP        = 14
-FP        = 4
-FN        = 6
-Precision = 0.7778
-Recall    = 0.7000
-F1        = 0.7368
-```
-
----
-
-## Section C — Code and Debugging
-
-### Q5 — নিচের code-এর সমস্যা কী এবং কীভাবে ঠিক করবে?
+### Q5 — কোড বাগ: `BCEWithLogitsLoss`-এ আগে সিগময়েড
 
 ```python
-probabilities = torch.sigmoid(
-    model(images)
-)
+# ভুল
+probabilities = torch.sigmoid(model(images))
+loss = torch.nn.BCEWithLogitsLoss()(probabilities, masks)
 
-loss = torch.nn.BCEWithLogitsLoss()(
-    probabilities,
-    masks,
-)
-```
-
-**উত্তর:**
-
-`BCEWithLogitsLoss` input হিসেবে raw logits প্রত্যাশা করে। এটি internally numerically stable পদ্ধতিতে sigmoid এবং binary cross-entropy একসঙ্গে হিসাব করে।
-
-কিন্তু code-এ আগে sigmoid প্রয়োগ করে probability দেওয়া হয়েছে। ফলে loss function probability-কে logits হিসেবে ধরে আবার sigmoid-জাতীয় transformation প্রয়োগ করবে। এতে:
-
-- training objective ভুল হয়ে যায়
-- gradient দুর্বল বা compressed হতে পারে
-- `BCEWithLogitsLoss`-এর numerical-stability সুবিধা নষ্ট হয়
-
-Correct code:
-
-```python
+# ঠিক
 logits = model(images)
-
-criterion = (
-    torch.nn.BCEWithLogitsLoss()
-)
-
-loss = criterion(
-    logits,
-    masks,
-)
+loss = torch.nn.BCEWithLogitsLoss()(logits, masks)
+# প্রোবাবিলিটি শুধু মূল্যায়নের সময়:
+probabilities = torch.sigmoid(logits)
+predicted_masks = probabilities >= 0.45
 ```
 
-Probability শুধু evaluation, thresholding বা visualization-এর সময় তৈরি করতে হবে:
+- কারণ: `BCEWithLogitsLoss` ভেতরে নিজে সিগময়েড করে, সংখ্যাগতভাবে স্থিতিশীলভাবে। আগে সিগময়েড করলে লস ফাংশন প্রোবাবিলিটিকে লজিট ভেবে আবার সিগময়েড-জাতীয় রূপান্তর করবে — ট্রেনিং উদ্দেশ্য ভুল হবে, গ্রেডিয়েন্ট সংকুচিত হবে, স্থিতিশীলতার সুবিধা নষ্ট হবে।
+
+### Q6 — রিসাইজের ক্রম: আগে `argmax`, তারপর bilinear কেন ভুল?
 
 ```python
-probabilities = torch.sigmoid(
-    logits
-)
+# ভুল: ক্লাস আইডির ওপর bilinear → অবৈধ ভগ্নাংশ ক্লাস
+class_mask = logits.argmax(dim=1)
+class_mask = F.interpolate(class_mask.float(), size=(512, 512), mode="bilinear")
 
-predicted_masks = (
-    probabilities >= 0.45
-)
+# ঠিক: লজিট রিসাইজ → তারপর argmax
+resized_logits = F.interpolate(logits, size=(512, 512), mode="bilinear", align_corners=False)
+class_mask = resized_logits.argmax(dim=1)
+
+# তৈরি ক্লাস মাস্ক রিসাইজ করতে হলে:
+resized_mask = F.interpolate(class_mask.unsqueeze(1).float(), size=(512, 512), mode="nearest").squeeze(1).long()
 ```
 
----
-
-### Q6 — নিচের resizing code কেন ভুল? Correct order লিখো।
-
-```python
-class_mask = logits.argmax(
-    dim=1
-)
-
-class_mask = F.interpolate(
-    class_mask.float(),
-    size=(512, 512),
-    mode="bilinear",
-)
-```
-
-**উত্তর:**
-
-এখানে দুটি সমস্যা আছে।
-
-প্রথমত, `argmax(dim=1)` করার পরে tensor-এর shape `[B, H, W]` হয়ে যায়। কিন্তু 2D bilinear resizing-এর জন্য সাধারণ input shape `[B, C, H, W]` প্রয়োজন।
-
-দ্বিতীয়ত, `argmax`-এর পরে tensor-এ discrete class ID থাকে। Bilinear interpolation করলে class ID-এর মধ্যে fractional value তৈরি হতে পারে, যা valid class নয়।
-
-Correct order:
-
-1. Continuous logits-কে bilinear interpolation দিয়ে resize করতে হবে।
-2. Resized logits-এর ওপর `argmax` করতে হবে।
-
-```python
-resized_logits = F.interpolate(
-    logits,
-    size=(512, 512),
-    mode="bilinear",
-    align_corners=False,
-)
-
-class_mask = resized_logits.argmax(
-    dim=1
-)
-```
-
-যদি আগে থেকেই তৈরি করা ground-truth বা predicted class-ID mask resize করতে হয়, তখন nearest-neighbour ব্যবহার করতে হবে:
-
-```python
-resized_mask = F.interpolate(
-    class_mask.unsqueeze(1).float(),
-    size=(512, 512),
-    mode="nearest",
-).squeeze(1).long()
-```
-
----
-
-## Section D — Failure Analysis
-
-### Q7 — Pixel accuracy `0.991`, কিন্তু Dice `0.764`। Pixel accuracy বেশি হলেও model perfect নয় কেন?
-
-**উত্তর:**
-
-Crack segmentation-এ প্রায় 95–99% pixel background এবং খুব অল্প pixel crack হতে পারে। এ কারণে dataset-এ severe foreground-background imbalance থাকে।
-
-Model যদি প্রায় সব pixel-কে background বলে, তাহলেও অধিকাংশ background pixel সঠিক হওয়ায় pixel accuracy খুব বেশি হতে পারে। কিন্তু model crack pixel miss করবে।
-
-Pixel accuracy-তে প্রচুর true negative প্রাধান্য পায়:
-
-$$\text{Accuracy} = \frac{\text{TP} + \text{TN}}{\text{TP} + \text{TN} + \text{FP} + \text{FN}}$$
-
-অন্যদিকে Dice foreground crack overlap-এর ওপর গুরুত্ব দেয়:
-
-$$\text{Dice} = \frac{2\text{TP}}{2\text{TP} + \text{FP} + \text{FN}}$$
-
-তাই:
-
-```text
-Pixel accuracy = 0.991
-Dice           = 0.764
-```
-
-এর অর্থ background classification খুব ভালো হলেও crack mask-এ এখনও false positive ও false negative আছে। Crack segmentation-এর জন্য Dice, IoU, precision এবং recall pixel accuracy-এর চেয়ে বেশি informative।
-
----
-
-### Q8 — নিচের result কী ধরনের weakness নির্দেশ করে? অন্তত তিনটি investigation বা improvement বলো।
-
-```text
-Box mAP75  = 0.466
-Mask mAP75 = 0.041
-```
-
-**উত্তর:**
-
-Box mAP75 তুলনামূলক ভালো হওয়ায় model crack-এর আনুমানিক location ও bounding box ধরতে পারছে।
-
-কিন্তু Mask mAP75 অত্যন্ত কম। অর্থাৎ predicted mask-এর precise shape, thin boundary এবং ground-truth polygon-এর সঙ্গে high-IoU overlap দুর্বল।
-
-প্রথমে investigation:
-
-1. Ground-truth polygon thin crack boundary ঠিকভাবে অনুসরণ করছে কি না এবং annotation অতিরিক্ত মোটা, অসম্পূর্ণ বা fragmented কি না পরীক্ষা করা।
-2. Original image, resized ground truth ও predicted mask একসঙ্গে দেখে resizing বা rasterization-এর কারণে thin crack হারাচ্ছে কি না পরীক্ষা করা।
-3. Small/thin instance-এ failure বেশি কি না size-wise mask performance পরীক্ষা করা।
-4. Correct box but poor mask cases আলাদাভাবে দেখা।
-5. একটানা visible crack dataset-এ একাধিক GT instance হিসেবে ভাগ হয়েছে কি না পরীক্ষা করা।
-
-সম্ভাব্য improvements:
-
-- Higher input resolution বা tiled inference ব্যবহার
-- Mask/prototype resolution বাড়ানো
-- Thin-crack ও low-contrast sample বৃদ্ধি করা
-- Geometry-preserving augmentation ব্যবহার
-- Annotation quality উন্নত করা
-- প্রয়োজনে larger segmentation model পরীক্ষা করা
-- উপরোক্ত সমস্যা যাচাইয়ের পরে mask-loss configuration পরিবর্তন করা
-
-Blindly loss weight বাড়ানোর আগে annotation এবং resolution পরীক্ষা করা উচিত।
-
----
-
-## Section E — System Design and Viva
-
-### Q9 — নিচের দুই requirement-এর জন্য কোন system ব্যবহার করবে?
-
-```text
-A. প্রতিটি image-এ মোট crack area দরকার
-B. প্রতিটি আলাদা crack-এর mask, box ও confidence দরকার
-```
-
-**উত্তর:**
-
-### Requirement A — মোট crack area
-
-**নির্বাচন: U-Net**
-
-কারণ U-Net একটি merged semantic crack mask তৈরি করে। সেই binary mask-এর foreground pixel count থেকে total crack area বের করা যায়।
-
-```python
-crack_pixels = (
-    predicted_mask == 1
-).sum()
-
-crack_ratio = (
-    crack_pixels
-    / predicted_mask.size
-)
-```
-
-এখানে পৃথক instance identity প্রয়োজন নেই।
-
-### Requirement B — পৃথক crack mask, box ও confidence
-
-**নির্বাচন: YOLO26-seg**
-
-কারণ এটি প্রতিটি detected instance-এর জন্য দেয়:
-
-```text
-Mask
-Bounding box
-Class ID
-Confidence score
-```
-
-### SAM কখন ব্যবহার করব?
-
-SAM2/SAM3 interactive segmentation বা annotation assistance-এর জন্য ব্যবহার করা যায়। Fixed-domain automatic production inference-এর primary model হিসেবে এটি এই দুই requirement-এর প্রথম পছন্দ নয়।
-
----
-
-### Q10 — নিচের CPU deployment result থেকে format এবং system নির্বাচন করো।
-
-```text
-U-Net:
-PyTorch = 648 ms
-ONNX    = 452 ms
-
-YOLO-seg:
-PyTorch = 167 ms
-ONNX    = 144 ms
-```
-
-**উত্তর:**
-
-### Format selection
-
-CPU deployment-এর জন্য **ONNX Runtime** নির্বাচন করব, কারণ দুটি model-এর ক্ষেত্রেই ONNX দ্রুত এবং parity পরীক্ষায় accuracy loss পাওয়া যায়নি।
-
-```text
-U-Net ONNX parity difference = 0.0
-YOLO ONNX parity difference  = 0.0
-```
-
-### System selection
-
-System নির্বাচন application requirement-এর ওপর নির্ভর করবে।
-
-- মোট crack area বা merged semantic map প্রয়োজন হলে: **U-Net ONNX**
-- পৃথক crack mask, box, count ও confidence প্রয়োজন হলে: **YOLO26-seg ONNX**
-
-যদি production requirement পৃথক crack inspection হয়, তাহলে YOLO26-seg ONNX নির্বাচন করব।
-
-### Latency
-
-```text
-U-Net ONNX    = 452 ms ≈ 2.21 FPS
-YOLO-seg ONNX = 144 ms ≈ 6.93 FPS
-```
-
-YOLO-seg ONNX দ্রুত, কিন্তু `6.93 FPS` সাধারণ `25–30 FPS` video target অনুযায়ী real-time বা near-real-time নয়। এটিকে low-frame-rate inference বলা উচিত।
-
-আরও দ্রুত করতে প্রয়োজন হতে পারে:
-
-- frame skipping
-- smaller input resolution
-- region-of-interest processing
-- asynchronous decode/inference
-- hardware acceleration
-- OpenVINO বা TensorRT
-- faster target CPU/GPU
-
-### Accuracy purpose
-
-U-Net-এর test Dice প্রায় `0.764`, তাই merged crack-pixel map-এর জন্য এটি বেশি উপযোগী।
-
-YOLO26-seg-এর test mask mAP50–95 প্রায় `0.179` এবং mask mAP75 প্রায় `0.041`; তাই instance output পাওয়া গেলেও precise boundary একটি গুরুত্বপূর্ণ limitation।
-
-### Production monitoring
-
-অন্তত নিচের তথ্য log করব:
-
-- preprocessing, inference ও postprocessing latency
-- effective FPS এবং dropped-frame count
-- detected instance count
-- confidence distribution
-- predicted crack-pixel ratio বা mask area
-- input brightness, blur ও resolution
-- CPU/RAM/GPU utilization
-- empty অথবা unusually large mask rate
-- runtime error ও failed-frame count
-- data-drift indicators
-
-**Final decision:**
-
-```text
-Format:
-ONNX Runtime
-
-Semantic area system:
-U-Net ONNX
-
-Separate-instance system:
-YOLO26-seg ONNX
-
-CPU real-time status:
-Neither system is currently real-time
-```
+- দুটো ভুল আছে: প্রথমত, `argmax`-এর পর শেপ `[B, H, W]` হয়, bilinear সাধারণত `[B, C, H, W]` চায়। দ্বিতীয়ত, আরো গুরুত্বপূর্ণ, `argmax`-এর পর টেনসরে ডিসক্রিট ক্লাস আইডি থাকে — bilinear করলে আইডির মাঝে ভগ্নাংশ মান আসে, যা কোনো বৈধ ক্লাস নয়। প্রথম ভুল `unsqueeze(1)` দিয়ে সারা যায়, দ্বিতীয়টা যায় না — তাই ক্রম বদলাতেই হবে।
+- এই নিয়ম সব জায়গায় এক: ছবি/লজিট/প্রোবাবিলিটিতে bilinear, তৈরি মাস্কে nearest। U-Net, SAM, ক্লিনিক — সব নোটবুকে এটাই মানা হয়েছে।
+
+### Q7 — পিক্সেল অ্যাকুরেসি ০.৯৯১, কিন্তু Dice ০.৭৬৪: মডেল কেন পারফেক্ট নয়?
+
+- ক্র্যাকে ~৯৮% পিক্সেল ব্যাকগ্রাউন্ড। মডেল প্রায় সবকিছুকে ব্যাকগ্রাউন্ড বললেও TN অনেক বেশি বলে অ্যাকুরেসি বেশি দেখাবে, কিন্তু ক্র্যাক মিস করবে।
+- অ্যাকুরেসিতে TN প্রাধান্য পায়: `(TP + TN) / মোট`। Dice-এ TN-এর ভূমিকা নেই: `2TP / (2TP + FP + FN)` — শুধু ফোরগ্রাউন্ড ওভারল্যাপ মাপে।
+- বাস্তব উদাহরণ (U-Net টেস্ট, ১১২ ছবি, imgsz ৪১৬, থ্রেশহোল্ড ০.৪৫): পিক্সেল অ্যাকুরেসি ০.৯৯০৬, Dice ০.৭৬৩৫ — ব্যাকগ্রাউন্ড ভালো চিনলেও ক্র্যাক মাস্কে FP/FN আছে।
+- আরো চরম উদাহরণ (ফাউন্ডেশন, সিনথেটিক ৬৪×৬৪): খালি প্রেডিকশনের অ্যাকুরেসি ০.৯৪৮৭, কিন্তু Dice ০। অ্যাকুরেসি একা দেখে কখনো মডেল বিচার করো না।
+
+### Q8 — বক্স mAP75 ভালো, মাস্ক mAP75 খুব কম: কী বোঝায়, কী করবে?
+
+- উদাহরণ (YOLO টেস্ট, ১১২ ছবি, imgsz ৬৪০, conf ০.০০১): বক্স mAP75 ০.৪৬৬, মাস্ক mAP75 ০.০৪১।
+- অর্থ: মডেল ক্র্যাকের আনুমানিক জায়গা আর বক্স ধরতে পারছে, কিন্তু মাস্কের নির্ভুল আকৃতি, পাতলা বাউন্ডারি, আর GT পলিগনের সাথে হাই-IoU ওভারল্যাপ দুর্বল।
+- লসের ওজন বাড়ানোর আগে তদন্ত করো, এই ক্রমে:
+  ১. GT পলিগন পাতলা ক্র্যাকের ধার ঠিকমতো অনুসরণ করছে কিনা, অ্যানোটেশন অতিরিক্ত মোটা/অসম্পূর্ণ/খণ্ডিত কিনা।
+  ২. মূল ছবি, রিসাইজ করা GT, আর প্রেডিক্টেড মাস্ক পাশাপাশি দেখে রিসাইজ/রাস্টারাইজেশনে পাতলা ক্র্যাক হারাচ্ছে কিনা।
+  ৩. ছোট/পাতলা ইনস্ট্যান্সে ব্যর্থতা বেশি কিনা, আকার-ভিত্তিক মাস্ক পারফরম্যান্স দেখো।
+  ৪. সঠিক বক্স কিন্তু খারাপ মাস্ক কেসগুলো আলাদা করে দেখো।
+  ৫. একটানা দৃশ্যমান ক্র্যাক ডেটায় একাধিক GT ইনস্ট্যান্সে ভাগ হয়েছে কিনা।
+- তারপর সম্ভাব্য উন্নতি: বেশি ইনপুট রেজোলিউশন বা টাইলড ইনফারেন্স, মাস্ক/প্রোটোটাইপ রেজোলিউশন বাড়ানো, পাতলা/কম-কনট্রাস্ট নমুনা বাড়ানো, জ্যামিতি-রক্ষাকারী অগমেন্টেশন, অ্যানোটেশন মান উন্নত করা, প্রয়োজনে বড় সেগমেন্টেশন মডেল — আর সব যাচাইয়ের পরেই মাস্ক-লস কনফিগ বদলানো।
+
+### Q9 — দুই রিকোয়ারমেন্টে কোন সিস্টেম?
+
+- **A. প্রতি ছবিতে মোট ক্র্যাক এরিয়া চাই → U-Net।** মার্জড বাইনারি মাস্কের ফোরগ্রাউন্ড পিক্সেল গুনলেই এরিয়া, অনুপাত = `crack_pixels / মোট পিক্সেল`। আলাদা ইনস্ট্যান্স পরিচয় দরকার নেই।
+- **B. প্রতি আলাদা ক্র্যাকের মাস্ক, বক্স, কনফিডেন্স চাই → YOLO26-seg।** প্রতিটা ডিটেক্টেড ইনস্ট্যান্সের জন্য মাস্ক + বক্স + ক্লাস আইডি + কনফিডেন্স দেয়।
+- **SAM কখন?** ইন্টার‍্যাক্টিভ সেগমেন্টেশন বা অ্যানোটেশন সহায়তায়। ফিক্সড-ডোমেইন স্বয়ংক্রিয় প্রোডাকশন ইনফারেন্সের প্রথম পছন্দ নয়।
+
+### Q10 — CPU ডিপ্লয়মেন্ট: ফরম্যাট আর সিস্টেম বাছাই (শর্তসহ)
+
+- মূল সংখ্যা (২০ ছবি, CPU): U-Net PyTorch ৬৪৮ ms, ONNX ৪৫২ ms; YOLO-seg PyTorch ১৬৭ ms, ONNX ১৪৪ ms। ONNX-এ দুটোই দ্রুত, তাই ফরম্যাট হিসেবে **ONNX Runtime** বাছা যায়।
+- ⚠️ **মূল নোটের ভুল ঠিক করা হলো:** মূল Q10 লিখেছিল "U-Net প্যারিটি পার্থক্য ০.০, YOLO প্যারিটি পার্থক্য ০.০" — শর্ত ছাড়া। আসল তথ্য:
+  - U-Net প্যারিটি ০.০ পাওয়া গেছে মাত্র ১২টি val নমুনায় (থ্রেশহোল্ড ০.৪৫)।
+  - YOLO প্যারিটি ০.০ পাওয়া গেছে শুধু সংশোধিত তুলনায় — দুটোই val, imgsz ৬৪০, ব্যাচ ১-এ। প্রথম তুলনা (PyTorch @ ৪১৬ বনাম ONNX @ ৬৪০) পার্থক্য ০.১০৯১-এ ব্যর্থ হয়েছিল।
+  - তাই "ONNX সবসময় লসলেস" বলা যাবে না — প্রতিটা নতুন মডেল/সেটিংয়ে আবার প্যারিটি মাপতে হবে।
+- সিস্টেম: মোট এরিয়া/মার্জড ম্যাপ চাইলে **U-Net ONNX**, আলাদা ক্র্যাকের মাস্ক/বক্স/কাউন্ট/কনফিডেন্স চাইলে **YOLO26-seg ONNX**।
+- লেটেন্সি: U-Net ONNX ৪৫২ ms ≈ ২.২১ FPS, YOLO-seg ONNX ১৪৪ ms ≈ ৬.৯৩ FPS। ৬.৯৩ FPS সাধারণ ২৫–৩০ FPS ভিডিও টার্গেটে রিয়েল-টাইম নয় — লো-ফ্রেম-রেট ইনফারেন্স বলতে হবে।
+- ⚠️ আরো একটা শর্ত মূল নোটে ছিল না: লেটেন্সি স্কোপ আলাদা — U-Net শুধু "মডেল ইনফারেন্স", YOLO "প্রিপ্রসেস + ইনফারেন্স + পোস্টপ্রসেস", আর ইনপুট সাইজও আলাদা (৪১৬ বনাম ৬৪০)। তাই FPS সরাসরি তুলনা করে "YOLO দ্রুত" বলা ঠিক নয়, স্কোপ আর সাইজ আগে মেলাতে হবে।
+- আরো দ্রুত করতে: ফ্রেম স্কিপিং, ছোট ইনপুট রেজোলিউশন, ROI প্রসেসিং, অ্যাসিঙ্ক্রোনাস ডিকোড/ইনফারেন্স, হার্ডওয়্যার অ্যাকসেলারেশন, OpenVINO/TensorRT, দ্রুত CPU/GPU।
+- নির্ভুলতা (সেটিংসহ): U-Net টেস্ট Dice ০.৭৬৩৫ (১১২ ছবি, ৪১৬ @ ০.৪৫) — মার্জড ম্যাপের জন্য উপযোগী। YOLO টেস্ট মাস্ক mAP50-95 ০.১৭৯, mAP75 ০.০৪০৭ (১১২ ছবি, ৬৪০) — ইনস্ট্যান্স আউটপুট পাওয়া গেলেও নির্ভুল বাউন্ডারি বড় সীমাবদ্ধতা।
+- প্রোডাকশন মনিটরিংয়ে অন্তত লগ করো: প্রিপ্রসেস/ইনফারেন্স/পোস্টপ্রসেস লেটেন্সি, কার্যকর FPS আর ড্রপড ফ্রেম, ডিটেক্টেড ইনস্ট্যান্স সংখ্যা, কনফিডেন্স বণ্টন, ক্র্যাক-পিক্সেল অনুপাত/মাস্ক এরিয়া, ইনপুট ব্রাইটনেস/ব্লার/রেজোলিউশন, CPU/RAM/GPU ব্যবহার, খালি বা অস্বাভাবিক বড় মাস্কের হার, রানটাইম এরর/ব্যর্থ ফ্রেম, ডেটা-ড্রিফট সূচক।
+- চূড়ান্ত সিদ্ধান্ত: ফরম্যাট ONNX Runtime; সেমান্টিক এরিয়া সিস্টেম U-Net ONNX; আলাদা-ইনস্ট্যান্স সিস্টেম YOLO26-seg ONNX; CPU রিয়েল-টাইম অবস্থা: কোনোটাই বর্তমানে রিয়েল-টাইম নয়।
+
+## ৪. মূল ফলাফল (সেটিংসহ, পুরো ইউনিট থেকে)
+
+- ডেটা: Crack-Seg, এক ক্লাস `crack`, সব ছবি ৪১৬×৪১৬; train ৩৭১৭ ছবি / ৪৮৯৩ ইনস্ট্যান্স, val ২০০ / ২৪৯, test ১১২ / ১৪৮।
+- U-Net (ResNet34, ২৪,৪৪৭,৮৪১ প্যারামিটার): val থ্রেশহোল্ড সুইপে BCE+Dice সেরা ০.৩০-এ Dice ০.৭৭৮২, BCE সেরা ০.৪৫-এ Dice ০.৭৭৭৬ — পার্থক্য ০.০০০৭, এটা টাই, জয় নয়। টেস্ট (১১২ ছবি, ৪১৬ @ ০.৪৫): Dice ০.৭৬৩৫, IoU ০.৬১৭৫।
+- YOLO-seg মাস্ক mAP — সেটিং ছাড়া কখনো বলো না: val @ ৪১৬ ডিফল্ট ০.২৬৩, val @ ৪১৬ mask_ratio ২-এ ০.১৮২, test @ ৬৪০-এ ০.১৭৯, ONNX প্যারিটি @ ৬৪০-এ ০.১৫৪। একই `best.pt`, ভিন্ন সেটিং, ভিন্ন সংখ্যা — পার্থক্যের কারণ সেটিং, মডেল নয়।
+- YOLO অপারেটিং পয়েন্ট (val, IoU ≥ ০.৫০): conf ০.৫০-এ TP ১৪৪, FP ৫০, FN ১০৫, F1 ০.৬৫০১; FP-র কারণ: খারাপ লোকালাইজেশন ৪৩, ব্যাকগ্রাউন্ড FP ৬, ডুপ্লিকেট ১।
+- SAM2 (৯ GT-প্রম্পটেড ইনস্ট্যান্স): বক্স গড় IoU ০.৫৫০৫, পয়েন্ট ০.৪১২৫; ±৫ পিক্সেল সরলে পয়েন্ট IoU ০.২৬৬১ → ০.০১৪৪ হতে পারে, অথচ কোয়ালিটি স্কোর বাড়ে।
+- SAM3 (৬ ছবি, ১৭ GT, IoU ≥ ০.৫০): সেরা টেক্সট "surface crack" F1 ০.১৭৩৯, এক্সেম্পলার (GT বক্স) F1 ০.২৫৫৩, unprompted রিকল ০.২৮১৩।
+- লেটেন্সি (২০ ছবি, CPU): U-Net ONNX ৪৫২.৩ ms, YOLO ONNX ১৪৪.৪ ms — কিন্তু স্কোপ আর ইনপুট সাইজ আলাদা, সরাসরি তুলনা নয়।
+
+## ৫. ভুল/ফাঁদ/সতর্কতা (পুরো ইউনিটের)
+
+- 🚨 **ফাউন্ডেশন বাগ — ভুয়া mIoU ১.০:** `multiclass_confusion_matrix()`-এ `target = prediction.reshape(-1).long()` লেখা আছে, আসল টার্গেট মুছে যায়, কনফিউশন ম্যাট্রিক্স আইডেনটিটি হয়ে যায়। সঠিক কোড: `target = target.reshape(-1).long()`। সঠিক হিসাব: কনফিউশন ম্যাট্রিক্স থেকে পার-ক্লাস TP = ডায়াগোনাল, FP = কলাম-যোগ − TP, FN = সারি-যোগ − TP, IoU = TP / (TP + FP + FN), তারপর সব ক্লাসের গড় — আর যাচাই হবে নন-আইডেনটিটি উদাহরণ দিয়ে, যেখানে GT আর প্রেডিকশন ইচ্ছা করে আলাদা।
+- 🚨 **SAM3 ফাইনাল প্রিন্ট ভুল:** "সেরা টেক্সট: crack, F1 ০.৯৪৭১" ছাপা হয়, কিন্তু টেবিল বলে সেরা টেক্সট "surface crack", F1 ০.১৭৩৯। প্রিন্ট বাতিল করো, টেবিল বিশ্বাস করো। টেক্সট প্রম্পট পাতলা ক্র্যাকে ব্যর্থ হয়, কারণ মডেলের শেখা "ক্র্যাক" ধারণা মোটা/স্পষ্ট ফাটলের, পাতলা স্ট্রাকচারের নয়।
+- ⚠️ **YOLO মাস্ক mAP সেটিং-নির্ভর:** উপরের চারটি সংখ্যা (০.২৬৩ / ০.১৮২ / ০.১৭৯ / ০.১৫৪) ভিন্ন ভিন্ন imgsz, mask_ratio, split, ব্যাচের ফল। একটা সংখ্যা খালি বললে সেটা অর্থহীন। কেন আলাদা: পাতলা ক্র্যাকের মাস্ক রেজোলিউশন/রাস্টারাইজেশন সেটিংয়ে অত্যন্ত সংবেদনশীল, আর টেস্ট সেট val সেটের চেয়ে কঠিন/আলাদা হতে পারে।
+- ⚠️ **U-Net "বিজয়ী" আর থ্রেশহোল্ডের ফাঁদ:** ০.০০০৭ পার্থক্য টাই, আর থ্রেশহোল্ড ০.৩০ বাছা হয়েছে একই val সেটে যেটা দিয়ে মডেল বাছা হয়েছে — তাই সুইপের সংখ্যা সামান্য আশাবাদী। টেস্টে অন্য থ্রেশহোল্ডে (০.৪৫) Dice ০.৭৬৩৫ পাওয়া গেছে, সেটা পরিষ্কার তুলনা নয়।
+- ⚠️ **ক্র্যাক-অডিটের সুপ্ত বাগ:** মিসিং-লেবেল শাখা `isinstance` (বিল্টইন) ফেরত দেয়, সাথে ভুল বানানের `"deatils"` কী। সেভ করা রানে চলেনি, কিন্তু নতুন ডেটায় মিসিং লেবেল থাকলে বিভ্রান্তিকর এরর দেবে।
+- ⚠️ **SAM ক্লিনিকের ড্রাফট ফাইলনাম:** `*.jpg.txt` বানানো হয়, `*.txt` নয় — স্টেম-মেলানো YOLO লোডার জোড়া দিতে পারবে না।
+- **SAM সংখ্যা ট্রেনড মডেলের সংখ্যার সাথে তুলনীয় নয়:** দুটো SAM নোটবুকেই প্রম্পট GT থেকে বানানো, নমুনা ক্ষুদ্র (৯ ইনস্ট্যান্স / ৬ ছবি), আর SAM3-র এক্সেম্পলার GT-প্রম্পট, জিরো-শট নয়।
+- **ক্লিনিকের "০ ডিটেকশন" শর্তসাপেক্ষ:** Mask R-CNN-এর ০টি শুধু স্কোর ≥ ০.৭০-এর পর, কাঁচা সংখ্যা ছাপা হয়নি। আর DeepLabV3+/Mask2Former চালানোই হয়নি।
+- **পিক্সেল অ্যাকুরেসির ফাঁদ (সবচেয়ে বারবার আসা ভুল):** ব্যাকগ্রাউন্ড ~৯৮% হলে খালি প্রেডিকশনও ~৯৫% অ্যাকুরেট দেখায়। সবসময় Dice/IoU/প্রিসিশন/রিকল সাথে দেখো।
+
+## ৬. ৫ মিনিটে মনে করার চেকলিস্ট
+
+- সেমান্টিক = এক মার্জড মাস্ক (U-Net), ইনস্ট্যান্স = আলাদা মাস্ক+বক্স+কনফিডেন্স (YOLO-seg), প্রম্পট = SAM — প্রশ্ন দিয়ে মডেল বাছো, মডেল দিয়ে প্রশ্ন নয়।
+- Dice = ২TP/(২TP+FP+FN), IoU = TP/(TP+FP+FN); অ্যাকুরেসি একা ফাঁদ, বিশেষ করে ~৯৮% ব্যাকগ্রাউন্ডে।
+- থ্রেশহোল্ড সুইপে মডেল একবার চালিয়ে সব থ্রেশহোল্ডের মিটার আপডেট করো; সেরা বিন্দু Dice দিয়ে বাছো, অনুমানে নয়।
+- YOLO মাস্ক mAP সবসময় সেটিংসহ বলো: ০.২৬৩ (val@৪১৬ ডিফল্ট) / ০.১৮২ (val@৪১৬ mask_ratio ২) / ০.১৭৯ (test@৬৪০) / ০.১৫৪ (ONNX@৬৪০)।
+- তিনটি বাগ/ভুল কখনো সত্যি হিসেবে বলো না: ফাউন্ডেশনের mIoU ১.০, SAM3-র "crack @ ০.৯৪৭১", আর শর্ত ছাড়া "ONNX প্যারিটি ০.০"।
+
+## ৭. নিজেকে যাচাই
+
+**প্রশ্ন ১: একটা ছবিতে মোট ক্র্যাক এরিয়া আর আলাদা ক্র্যাকের সংখ্যা — দুটোই চাইলে কোন মডেল, আর কেন?**
+উত্তর: YOLO-seg। কারণ আলাদা ইনস্ট্যান্সের মাস্ক পেলে সংখ্যা গোনা যায়, আর সব মাস্কের পিক্সেল যোগ করলে মোট এরিয়াও পাওয়া যায়। শুধু U-Net দিয়ে সংখ্যা গোনা যাবে না, কারণ ইনস্ট্যান্স মিশে যায়।
+
+**প্রশ্ন ২: YOLO মাস্ক mAP50-95 এক জায়গায় ০.২৬৩, আরেক জায়গায় ০.১৮২ — মডেল কি দুটো?**
+উত্তর: না, একই `best.pt`। পার্থক্য মূল্যায়নের সেটিংয়ে — একটায় `mask_ratio` ডিফল্ট, আরেকটায় `mask_ratio = 2`। পাতলা মাস্ক এই সেটিংয়ে খুব সংবেদনশীল, তাই সংখ্যার সাথে সেটিং বলা বাধ্যতামূলক।
+
+**প্রশ্ন ৩: SAM3-র ফাইনাল রিপোর্টে "crack @ ০.৯৪৭১" দেখলে পরীক্ষায় কী উত্তর দেবে?**
+উত্তর: বলবে এটা ভুল, টেবিল অনুযায়ী সেরা টেক্সট "surface crack", F1 ০.১৭৩৯। কারণ টেবিলের TP+FN প্রতিটা সারিতে ১৭ মেলে, আর ০.৯৪৭১ টেবিলের কোথাও নেই — প্রিন্ট/রিপোর্ট লজিকেই ভুল আছে।
