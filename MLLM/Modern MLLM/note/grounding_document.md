@@ -6,7 +6,6 @@
 
 
 **Q1: GT box [100, 50, 200, 150] যদি xywh হয়, তার xyxy কত?**
-
 **Ans:** `xywh` বলতে বোঝায় `[x_min, y_min, width, height]` এবং `xyxy` হলো `[x_min, y_min, x_max, y_max]`।
 
 * $x_{max} = x_{min} + width = 100 + 200 = 300$
