@@ -34,8 +34,7 @@
 2. **Trainable Parameter Count ও `.grad` চেক:** প্রিন্টআউটে মোট trainable parameter-এর সংখ্যা মিলিয়ে এবং `backward()`-এর পর `deepstack_merger_list`-এর প্যারামিটারগুলোর `.grad` মান `None` (বা `grad_norm=0`) আছে কি না তা দেখেই নিশ্চিত হওয়া যাবে যে সেটি trainable হয়নি।
 
 
-
-**Q1: LoRA-এর trainable parameters কম হলেও কেন পুরো training peak একই অনুপাতে কমে না?**
+**Q4: LoRA-এর trainable parameters কম হলেও কেন পুরো training peak একই অনুপাতে কমে না?**
 
 **Ans:** কারণ training-এর সময় GPU VRAM শুধুমাত্র trainable parameters-এর জন্য খরচ হয় না। LoRA মূলত **gradients** এবং **optimizer states** (যেমন AdamW-এর momentum ও variance)-এর মেমরি অনেক কমিয়ে দেয়, কিন্তু বাকি দুটি বড় মেমরি খরচ আগের মতোই থেকে যায়:
 
@@ -46,7 +45,7 @@
 
 ---
 
-**Q2: একই receipt-এ loss কমেছে কিন্তু validation total accuracy বাড়েনি—কীভাবে সম্ভব?**
+**Q5: একই receipt-এ loss কমেছে কিন্তু validation total accuracy বাড়েনি—কীভাবে সম্ভব?**
 
 **Ans:** এর পেছনে দুটি মূল কারণ কাজ করে:
 
@@ -55,7 +54,7 @@
 
 ---
 
-**Q3: `best_adapter` আর `resume_step8.pt` কোন দুটি আলাদা কাজের জন্য?**
+**Q6: `best_adapter` আর `resume_step8.pt` কোন দুটি আলাদা কাজের জন্য?**
 
 **Ans:** এই দুটি ফাইল সম্পূর্ণ ভিন্ন দুটি উদ্দেশ্যে সংরক্ষণ করা হয়:
 
