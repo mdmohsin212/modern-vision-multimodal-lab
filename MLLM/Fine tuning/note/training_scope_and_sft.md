@@ -32,3 +32,32 @@
 * **Printout দিয়ে যাচাই করার উপায়:**
 1. **Trainable Parameter Names চেক:** প্রিন্টআউটে যেসব প্যারামিটারের `requires_grad=True` দেখানো হচ্ছে, সেই তালিকায় শুধু `visual.merger...` নামগুলো আছে নাকি `visual.deepstack_merger_list...` নামগুলোও প্রিন্ট হয়েছে তা দেখে।
 2. **Trainable Parameter Count ও `.grad` চেক:** প্রিন্টআউটে মোট trainable parameter-এর সংখ্যা মিলিয়ে এবং `backward()`-এর পর `deepstack_merger_list`-এর প্যারামিটারগুলোর `.grad` মান `None` (বা `grad_norm=0`) আছে কি না তা দেখেই নিশ্চিত হওয়া যাবে যে সেটি trainable হয়নি।
+
+
+
+**Q1: LoRA-এর trainable parameters কম হলেও কেন পুরো training peak একই অনুপাতে কমে না?**
+
+**Ans:** কারণ training-এর সময় GPU VRAM শুধুমাত্র trainable parameters-এর জন্য খরচ হয় না। LoRA মূলত **gradients** এবং **optimizer states** (যেমন AdamW-এর momentum ও variance)-এর মেমরি অনেক কমিয়ে দেয়, কিন্তু বাকি দুটি বড় মেমরি খরচ আগের মতোই থেকে যায়:
+
+* **Base Model Weights:** মূল মডেলের weights frozen থাকলেও forward pass এবং gradient flow-এর জন্য পুরো base model-টি GPU মেমরিতে লোড রাখতেই হয়।
+* **Activations:** Backward pass-এ gradient হিসাব করার জন্য forward pass-এর সময় লেয়ারগুলোতে তৈরি হওয়া মধ্যবর্তী **activations** মেমরিতে জমা রাখতে হয়। এই activation memory নির্ভর করে batch size, sequence length এবং image tokens-এর সংখ্যার ওপর—trainable parameter কম-বেশির ওপর নয়।
+
+এ কারণে trainable parameters ১%-এর নিচে নেমে এলেও মোট peak GPU memory সেই অনুপাতে কমে না।
+
+---
+
+**Q2: একই receipt-এ loss কমেছে কিন্তু validation total accuracy বাড়েনি—কীভাবে সম্ভব?**
+
+**Ans:** এর পেছনে দুটি মূল কারণ কাজ করে:
+
+* **গড় Token Loss বনাম Strict Exact Match:** Training loss হলো আউটপুটের সব টোকেনের গড় cross-entropy loss। মডেল হয়তো JSON-এর কাঠামোগত টোকেনগুলো (যেমন `{"item":`, ব্র্যাকেট, কমা বা সহজ শব্দ) আগের চেয়ে বেশি আত্মবিশ্বাসের সাথে প্রেডিক্ট করছে, ফলে গড় loss কমেছে। কিন্তু `total` accuracy বাড়তে হলে `total` ফিল্ডের প্রতিটি ডিজিট হুবহু মিলতে হয়। একটি ডিজিট ভুল হলেই গড় loss কমলেও accuracy শূন্যই থেকে যায়।
+* **Memorization (Overfitting) ও Visual Detail:** মডেলটি নির্দিষ্ট receipt-এর টেক্সট প্যাটার্ন মুখস্থ করে ফেলেছে (ফলে ওই receipt-এ loss কমেছে), কিন্তু নতুন validation receipt-এ generalize করতে পারছে না। আবার অনেক সময় ছবির রেজোলিউশন কম থাকলে `total`-এর সংখ্যাটি ঝাপসা থাকে—ফলে মডেল ফরম্যাট শিখে loss কমালেও ছবি থেকে সঠিক সংখ্যাটি পড়তে ব্যর্থ হয়।
+
+---
+
+**Q3: `best_adapter` আর `resume_step8.pt` কোন দুটি আলাদা কাজের জন্য?**
+
+**Ans:** এই দুটি ফাইল সম্পূর্ণ ভিন্ন দুটি উদ্দেশ্যে সংরক্ষণ করা হয়:
+
+* **`best_adapter` (Evaluation ও Inference-এর জন্য):** এতে শুধুমাত্র validation-এ সেরা ফলাফল দেওয়া **trained LoRA adapter weights** এবং কনফিগারেশন থাকে। এটি আকারে খুব ছোট হয় এবং ট্রেনিং শেষে base model-এর সাথে যুক্ত করে **নতুন ছবিতে প্রেডিকশন (inference) বা ডেপ্লয় করার জন্য** ব্যবহৃত হয়। এতে optimizer-এর কোনো তথ্য থাকে না।
+* **`resume_step8.pt` (মাঝপথে থেমে যাওয়া Training আবার চালু করার জন্য):** এটি একটি সম্পূর্ণ **training checkpoint**। এতে মডেলের weights-এর পাশাপাশি **optimizer states** (AdamW momentum/variance), **learning rate scheduler state**, বর্তমান **step/epoch নম্বর** এবং **random seed states** সেভ থাকে। GPU crash বা সময় শেষ হওয়ার কারণে ট্রেনিং বন্ধ হয়ে গেলে ঠিক step 8 থেকে আগের গতি ও শেখার ধারাবাহিকতা বজায় রেখে **ট্রেনিং পুনরায় শুরু (resume) করার জন্য** এটি ব্যবহৃত হয়।
